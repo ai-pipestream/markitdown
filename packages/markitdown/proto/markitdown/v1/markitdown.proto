@@ -1,0 +1,126 @@
+syntax = "proto3";
+
+package markitdown.v1;
+
+service MarkItDownService {
+  rpc Convert(ConvertRequest) returns (ConvertResponse);
+  rpc ConvertStream(ConvertRequest) returns (stream ConvertStreamResponse);
+}
+
+message ConvertRequest {
+  Source source = 1;
+  ConversionOptions conversion_options = 2;
+  ServiceOptions service_options = 3;
+  StreamingOptions streaming_options = 4;
+}
+
+message Source {
+  oneof input {
+    string local_path = 1;
+    string uri = 2;
+    bytes content = 3;
+  }
+
+  StreamInfo stream_info = 4;
+}
+
+message StreamInfo {
+  optional string mimetype = 1;
+  optional string extension = 2;
+  optional string charset = 3;
+  optional string filename = 4;
+  optional string local_path = 5;
+  optional string url = 6;
+}
+
+message ConversionOptions {
+  optional bool keep_data_uris = 1;
+}
+
+message ServiceOptions {
+  optional bool enable_builtins = 1;
+  optional bool enable_plugins = 2;
+  DocumentIntelligenceOptions document_intelligence = 3;
+  ContentUnderstandingOptions content_understanding = 4;
+}
+
+message DocumentIntelligenceOptions {
+  string endpoint = 1;
+}
+
+message ContentUnderstandingOptions {
+  string endpoint = 1;
+  optional string analyzer_id = 2;
+  repeated ContentUnderstandingFileType file_types = 3;
+}
+
+enum ContentUnderstandingFileType {
+  CONTENT_UNDERSTANDING_FILE_TYPE_UNSPECIFIED = 0;
+  CONTENT_UNDERSTANDING_FILE_TYPE_PDF = 1;
+  CONTENT_UNDERSTANDING_FILE_TYPE_DOCX = 2;
+  CONTENT_UNDERSTANDING_FILE_TYPE_PPTX = 3;
+  CONTENT_UNDERSTANDING_FILE_TYPE_XLSX = 4;
+  CONTENT_UNDERSTANDING_FILE_TYPE_HTML = 5;
+  CONTENT_UNDERSTANDING_FILE_TYPE_TXT = 6;
+  CONTENT_UNDERSTANDING_FILE_TYPE_MD = 7;
+  CONTENT_UNDERSTANDING_FILE_TYPE_RTF = 8;
+  CONTENT_UNDERSTANDING_FILE_TYPE_XML = 9;
+  CONTENT_UNDERSTANDING_FILE_TYPE_EML = 10;
+  CONTENT_UNDERSTANDING_FILE_TYPE_MSG = 11;
+  CONTENT_UNDERSTANDING_FILE_TYPE_JPEG = 12;
+  CONTENT_UNDERSTANDING_FILE_TYPE_PNG = 13;
+  CONTENT_UNDERSTANDING_FILE_TYPE_BMP = 14;
+  CONTENT_UNDERSTANDING_FILE_TYPE_TIFF = 15;
+  CONTENT_UNDERSTANDING_FILE_TYPE_HEIF = 16;
+  CONTENT_UNDERSTANDING_FILE_TYPE_MP4 = 17;
+  CONTENT_UNDERSTANDING_FILE_TYPE_M4V = 18;
+  CONTENT_UNDERSTANDING_FILE_TYPE_MOV = 19;
+  CONTENT_UNDERSTANDING_FILE_TYPE_AVI = 20;
+  CONTENT_UNDERSTANDING_FILE_TYPE_MKV = 21;
+  CONTENT_UNDERSTANDING_FILE_TYPE_WEBM = 22;
+  CONTENT_UNDERSTANDING_FILE_TYPE_FLV = 23;
+  CONTENT_UNDERSTANDING_FILE_TYPE_WMV = 24;
+  CONTENT_UNDERSTANDING_FILE_TYPE_WAV = 25;
+  CONTENT_UNDERSTANDING_FILE_TYPE_MP3 = 26;
+  CONTENT_UNDERSTANDING_FILE_TYPE_M4A = 27;
+  CONTENT_UNDERSTANDING_FILE_TYPE_FLAC = 28;
+  CONTENT_UNDERSTANDING_FILE_TYPE_OGG = 29;
+  CONTENT_UNDERSTANDING_FILE_TYPE_AAC = 30;
+  CONTENT_UNDERSTANDING_FILE_TYPE_WMA = 31;
+}
+
+message StreamingOptions {
+  optional uint32 markdown_chunk_size_bytes = 1;
+}
+
+message ConvertResponse {
+  ConversionResult result = 1;
+}
+
+message ConversionResult {
+  string markdown = 1;
+  optional string title = 2;
+}
+
+message ConvertStreamResponse {
+  oneof event {
+    ConversionStarted started = 1;
+    MarkdownChunk markdown_chunk = 2;
+    ConversionCompleted completed = 3;
+  }
+}
+
+message ConversionStarted {
+  string source_kind = 1;
+}
+
+message MarkdownChunk {
+  uint32 chunk_index = 1;
+  string markdown = 2;
+  bool is_last = 3;
+}
+
+message ConversionCompleted {
+  uint32 total_chunks = 1;
+  optional string title = 2;
+}

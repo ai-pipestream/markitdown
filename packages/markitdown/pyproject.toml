@@ -30,6 +30,8 @@ dependencies = [
   "magika~=0.6.1",
   "charset-normalizer",
   "defusedxml",
+  "grpcio>=1.81.0",
+  "protobuf>=6.33.5",
 ]
 
 [project.optional-dependencies]
@@ -72,6 +74,7 @@ path = "src/markitdown/__about__.py"
 
 [project.scripts]
 markitdown = "markitdown.__main__:main"
+markitdown-grpc = "markitdown.grpc.server:main"
 
 [tool.hatch.envs.default]
 features = ["all"]
