@@ -4,10 +4,16 @@ package markitdown.v1;
 
 service MarkItDownService {
   rpc Convert(ConvertRequest) returns (ConvertResponse);
-  rpc ConvertStream(ConvertRequest) returns (stream ConvertStreamResponse);
+  rpc ConvertStream(ConvertStreamRequest) returns (stream ConvertStreamResponse);
 }
 
 message ConvertRequest {
+  Source source = 1;
+  ConversionOptions conversion_options = 2;
+  ServiceOptions service_options = 3;
+}
+
+message ConvertStreamRequest {
   Source source = 1;
   ConversionOptions conversion_options = 2;
   ServiceOptions service_options = 3;

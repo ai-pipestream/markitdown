@@ -5,23 +5,26 @@ import warnings
 
 from markitdown.grpc.v1 import markitdown_pb2 as markitdown_dot_v1_dot_markitdown__pb2
 
-GRPC_GENERATED_VERSION = '1.81.0'
+GRPC_GENERATED_VERSION = "1.81.0"
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
 try:
     from grpc._utilities import first_version_is_lower
-    _version_not_supported = first_version_is_lower(GRPC_VERSION, GRPC_GENERATED_VERSION)
+
+    _version_not_supported = first_version_is_lower(
+        GRPC_VERSION, GRPC_GENERATED_VERSION
+    )
 except ImportError:
     _version_not_supported = True
 
 if _version_not_supported:
     raise RuntimeError(
-        f'The grpc package installed is at version {GRPC_VERSION},'
-        + ' but the generated code in markitdown/v1/markitdown_pb2_grpc.py depends on'
-        + f' grpcio>={GRPC_GENERATED_VERSION}.'
-        + f' Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}'
-        + f' or downgrade your generated code using grpcio-tools<={GRPC_VERSION}.'
+        f"The grpc package installed is at version {GRPC_VERSION},"
+        + " but the generated code in markitdown/v1/markitdown_pb2_grpc.py depends on"
+        + f" grpcio>={GRPC_GENERATED_VERSION}."
+        + f" Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}"
+        + f" or downgrade your generated code using grpcio-tools<={GRPC_VERSION}."
     )
 
 
@@ -35,15 +38,17 @@ class MarkItDownServiceStub:
             channel: A grpc.Channel.
         """
         self.Convert = channel.unary_unary(
-                '/markitdown.v1.MarkItDownService/Convert',
-                request_serializer=markitdown_dot_v1_dot_markitdown__pb2.ConvertRequest.SerializeToString,
-                response_deserializer=markitdown_dot_v1_dot_markitdown__pb2.ConvertResponse.FromString,
-                _registered_method=True)
+            "/markitdown.v1.MarkItDownService/Convert",
+            request_serializer=markitdown_dot_v1_dot_markitdown__pb2.ConvertRequest.SerializeToString,
+            response_deserializer=markitdown_dot_v1_dot_markitdown__pb2.ConvertResponse.FromString,
+            _registered_method=True,
+        )
         self.ConvertStream = channel.unary_stream(
-                '/markitdown.v1.MarkItDownService/ConvertStream',
-                request_serializer=markitdown_dot_v1_dot_markitdown__pb2.ConvertRequest.SerializeToString,
-                response_deserializer=markitdown_dot_v1_dot_markitdown__pb2.ConvertStreamResponse.FromString,
-                _registered_method=True)
+            "/markitdown.v1.MarkItDownService/ConvertStream",
+            request_serializer=markitdown_dot_v1_dot_markitdown__pb2.ConvertStreamRequest.SerializeToString,
+            response_deserializer=markitdown_dot_v1_dot_markitdown__pb2.ConvertStreamResponse.FromString,
+            _registered_method=True,
+        )
 
 
 class MarkItDownServiceServicer:
@@ -52,54 +57,59 @@ class MarkItDownServiceServicer:
     def Convert(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
+        context.set_details("Method not implemented!")
+        raise NotImplementedError("Method not implemented!")
 
     def ConvertStream(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
+        context.set_details("Method not implemented!")
+        raise NotImplementedError("Method not implemented!")
 
 
 def add_MarkItDownServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
-            'Convert': grpc.unary_unary_rpc_method_handler(
-                    servicer.Convert,
-                    request_deserializer=markitdown_dot_v1_dot_markitdown__pb2.ConvertRequest.FromString,
-                    response_serializer=markitdown_dot_v1_dot_markitdown__pb2.ConvertResponse.SerializeToString,
-            ),
-            'ConvertStream': grpc.unary_stream_rpc_method_handler(
-                    servicer.ConvertStream,
-                    request_deserializer=markitdown_dot_v1_dot_markitdown__pb2.ConvertRequest.FromString,
-                    response_serializer=markitdown_dot_v1_dot_markitdown__pb2.ConvertStreamResponse.SerializeToString,
-            ),
+        "Convert": grpc.unary_unary_rpc_method_handler(
+            servicer.Convert,
+            request_deserializer=markitdown_dot_v1_dot_markitdown__pb2.ConvertRequest.FromString,
+            response_serializer=markitdown_dot_v1_dot_markitdown__pb2.ConvertResponse.SerializeToString,
+        ),
+        "ConvertStream": grpc.unary_stream_rpc_method_handler(
+            servicer.ConvertStream,
+            request_deserializer=markitdown_dot_v1_dot_markitdown__pb2.ConvertStreamRequest.FromString,
+            response_serializer=markitdown_dot_v1_dot_markitdown__pb2.ConvertStreamResponse.SerializeToString,
+        ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
-            'markitdown.v1.MarkItDownService', rpc_method_handlers)
+        "markitdown.v1.MarkItDownService", rpc_method_handlers
+    )
     server.add_generic_rpc_handlers((generic_handler,))
-    server.add_registered_method_handlers('markitdown.v1.MarkItDownService', rpc_method_handlers)
+    server.add_registered_method_handlers(
+        "markitdown.v1.MarkItDownService", rpc_method_handlers
+    )
 
 
- # This class is part of an EXPERIMENTAL API.
+# This class is part of an EXPERIMENTAL API.
 class MarkItDownService:
     """Missing associated documentation comment in .proto file."""
 
     @staticmethod
-    def Convert(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
+    def Convert(
+        request,
+        target,
+        options=(),
+        channel_credentials=None,
+        call_credentials=None,
+        insecure=False,
+        compression=None,
+        wait_for_ready=None,
+        timeout=None,
+        metadata=None,
+    ):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/markitdown.v1.MarkItDownService/Convert',
+            "/markitdown.v1.MarkItDownService/Convert",
             markitdown_dot_v1_dot_markitdown__pb2.ConvertRequest.SerializeToString,
             markitdown_dot_v1_dot_markitdown__pb2.ConvertResponse.FromString,
             options,
@@ -110,24 +120,27 @@ class MarkItDownService:
             wait_for_ready,
             timeout,
             metadata,
-            _registered_method=True)
+            _registered_method=True,
+        )
 
     @staticmethod
-    def ConvertStream(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
+    def ConvertStream(
+        request,
+        target,
+        options=(),
+        channel_credentials=None,
+        call_credentials=None,
+        insecure=False,
+        compression=None,
+        wait_for_ready=None,
+        timeout=None,
+        metadata=None,
+    ):
         return grpc.experimental.unary_stream(
             request,
             target,
-            '/markitdown.v1.MarkItDownService/ConvertStream',
-            markitdown_dot_v1_dot_markitdown__pb2.ConvertRequest.SerializeToString,
+            "/markitdown.v1.MarkItDownService/ConvertStream",
+            markitdown_dot_v1_dot_markitdown__pb2.ConvertStreamRequest.SerializeToString,
             markitdown_dot_v1_dot_markitdown__pb2.ConvertStreamResponse.FromString,
             options,
             channel_credentials,
@@ -137,4 +150,5 @@ class MarkItDownService:
             wait_for_ready,
             timeout,
             metadata,
-            _registered_method=True)
+            _registered_method=True,
+        )

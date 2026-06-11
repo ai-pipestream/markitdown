@@ -44,8 +44,8 @@ print(result.text_content)
 
 ### gRPC API (Buf + streaming)
 
-- Protobuf definition: `/home/runner/work/markitdown/markitdown/krickert/markitdown/packages/markitdown/proto/markitdown/v1/markitdown.proto`
-- Buf config: `/home/runner/work/markitdown/markitdown/krickert/markitdown/packages/markitdown/buf.yaml`
+- Protobuf definition: `proto/markitdown/v1/markitdown.proto`
+- Buf config: `buf.yaml`
 - Server entrypoint: `markitdown-grpc --bind-address 127.0.0.1:50051`
 
 The `Convert` RPC returns full markdown in a single response, and `ConvertStream` returns strongly typed streaming chunks.

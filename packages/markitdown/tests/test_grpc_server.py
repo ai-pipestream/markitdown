@@ -53,7 +53,7 @@ def test_convert_local_file(grpc_client, tmp_path: Path):
 
 
 def test_convert_stream_returns_chunk_sequence(grpc_client):
-    request = markitdown_pb2.ConvertRequest(
+    request = markitdown_pb2.ConvertStreamRequest(
         source=markitdown_pb2.Source(
             content=b"one\ntwo\nthree\n",
             stream_info=markitdown_pb2.StreamInfo(
@@ -68,7 +68,9 @@ def test_convert_stream_returns_chunk_sequence(grpc_client):
     stream = list(grpc_client.ConvertStream(request))
 
     assert stream[0].HasField("started")
-    markdown_events = [event.markdown_chunk for event in stream if event.HasField("markdown_chunk")]
+    markdown_events = [
+        event.markdown_chunk for event in stream if event.HasField("markdown_chunk")
+    ]
     assert len(markdown_events) > 0
     assert stream[-1].HasField("completed")
     assert stream[-1].completed.total_chunks == len(markdown_events)

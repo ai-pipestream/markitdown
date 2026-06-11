@@ -62,7 +62,9 @@ class MarkItDownServiceServicer(markitdown_pb2_grpc.MarkItDownServiceServicer):
         )
 
     def ConvertStream(
-        self, request: markitdown_pb2.ConvertRequest, context: grpc.ServicerContext
+        self,
+        request: markitdown_pb2.ConvertStreamRequest,
+        context: grpc.ServicerContext,
     ) -> Iterator[markitdown_pb2.ConvertStreamResponse]:
         conversion_result = self._convert_request(request, context)
         source_kind = request.source.WhichOneof("input") or ""
@@ -101,7 +103,9 @@ class MarkItDownServiceServicer(markitdown_pb2_grpc.MarkItDownServiceServicer):
         yield markitdown_pb2.ConvertStreamResponse(completed=completed)
 
     def _convert_request(
-        self, request: markitdown_pb2.ConvertRequest, context: grpc.ServicerContext
+        self,
+        request: markitdown_pb2.ConvertRequest | markitdown_pb2.ConvertStreamRequest,
+        context: grpc.ServicerContext,
     ) -> DocumentConverterResult:
         source_kind = request.source.WhichOneof("input")
         if source_kind is None:
@@ -111,10 +115,14 @@ class MarkItDownServiceServicer(markitdown_pb2_grpc.MarkItDownServiceServicer):
             )
 
         markitdown_client = _create_markitdown(request.service_options)
-        convert_kwargs = _build_convert_kwargs(request.conversion_options, request.source)
+        convert_kwargs = _build_convert_kwargs(
+            request.conversion_options, request.source
+        )
 
         if source_kind == "local_path":
-            return markitdown_client.convert_local(request.source.local_path, **convert_kwargs)
+            return markitdown_client.convert_local(
+                request.source.local_path, **convert_kwargs
+            )
         if source_kind == "uri":
             return markitdown_client.convert_uri(request.source.uri, **convert_kwargs)
 
@@ -127,7 +135,9 @@ class MarkItDownServiceServicer(markitdown_pb2_grpc.MarkItDownServiceServicer):
     def _to_proto_result(
         conversion_result: DocumentConverterResult,
     ) -> markitdown_pb2.ConversionResult:
-        proto_result = markitdown_pb2.ConversionResult(markdown=conversion_result.markdown)
+        proto_result = markitdown_pb2.ConversionResult(
+            markdown=conversion_result.markdown
+        )
         if conversion_result.title:
             proto_result.title = conversion_result.title
         return proto_result
@@ -195,10 +205,7 @@ def _to_cu_file_types(
 ) -> list[ContentUnderstandingFileType]:
     converted: list[ContentUnderstandingFileType] = []
     for file_type in file_types:
-        if (
-            file_type
-            == markitdown_pb2.CONTENT_UNDERSTANDING_FILE_TYPE_UNSPECIFIED
-        ):
+        if file_type == markitdown_pb2.CONTENT_UNDERSTANDING_FILE_TYPE_UNSPECIFIED:
             continue
         converted.append(_CU_FILE_TYPE_MAP[file_type])
     return converted
@@ -215,9 +222,7 @@ def _chunk_markdown(markdown: str, chunk_size: int) -> Iterator[str]:
         start = end
 
 
-def serve(
-    bind_address: str = "127.0.0.1:50051", max_workers: int = 10
-) -> grpc.Server:
+def serve(bind_address: str = "127.0.0.1:50051", max_workers: int = 10) -> grpc.Server:
     grpc_server = grpc.server(futures.ThreadPoolExecutor(max_workers=max_workers))
     markitdown_pb2_grpc.add_MarkItDownServiceServicer_to_server(
         MarkItDownServiceServicer(), grpc_server
@@ -228,9 +233,7 @@ def serve(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Run the MarkItDown gRPC server."
-    )
+    parser = argparse.ArgumentParser(description="Run the MarkItDown gRPC server.")
     parser.add_argument(
         "--bind-address",
         default="127.0.0.1:50051",
