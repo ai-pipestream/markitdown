@@ -287,6 +287,67 @@ docker build -t markitdown:latest .
 docker run --rm -i markitdown:latest < ~/your-file.pdf > output.md
 ```
 
+### gRPC
+
+MarkItDown includes a built-in gRPC server and client.
+
+**Start the server:**
+
+```sh
+markitdown-grpc --bind-address 127.0.0.1:50051
+```
+
+**CLI client** — send a convert request to the running server:
+
+```sh
+# Convert a local file
+markitdown-grpc-client path/to/file.pdf
+
+# Convert a remote URI
+markitdown-grpc-client --uri https://example.com/page.html
+
+# Pipe content from stdin (provide an extension hint so the server can detect the format)
+cat file.docx | markitdown-grpc-client -x .docx
+
+# Use the streaming RPC and save output to a file
+markitdown-grpc-client --stream path/to/file.pdf -o output.md
+
+# Connect to a non-default address
+markitdown-grpc-client --address 10.0.0.5:50051 path/to/file.pdf
+```
+
+**Python client:**
+
+```python
+from markitdown.grpc import MarkItDownClient
+
+# Unary convert
+with MarkItDownClient("127.0.0.1:50051") as client:
+    result = client.convert(local_path="path/to/file.pdf")
+    print(result.markdown)
+
+# Convert a remote URI
+with MarkItDownClient() as client:
+    result = client.convert(uri="https://example.com/page.html")
+    print(result.markdown)
+
+# Convert raw bytes
+with MarkItDownClient() as client:
+    with open("file.docx", "rb") as f:
+        data = f.read()
+    result = client.convert(content=data, extension=".docx")
+    print(result.markdown)
+
+# Streaming convert — reassemble markdown from chunks
+with MarkItDownClient() as client:
+    parts = []
+    for event in client.convert_stream(local_path="path/to/file.pdf"):
+        if event.HasField("markdown_chunk"):
+            parts.append(event.markdown_chunk.markdown)
+    markdown = "".join(parts)
+    print(markdown)
+```
+
 ## Contributing
 
 This project welcomes contributions and suggestions. Most contributions require you to agree to a
