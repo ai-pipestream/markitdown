@@ -8,18 +8,40 @@ import grpc
 
 from .v1 import markitdown_pb2, markitdown_pb2_grpc
 
+# Matches the server default so large documents and results round-trip.
+DEFAULT_MAX_MESSAGE_BYTES = 100 * 1024 * 1024
+
 
 class MarkItDownClient:
     """A simple gRPC client for the MarkItDown service."""
 
     def __init__(
-        self, address: str = "127.0.0.1:50051", channel: grpc.Channel | None = None
+        self,
+        address: str = "127.0.0.1:50051",
+        channel: grpc.Channel | None = None,
+        max_message_bytes: int = DEFAULT_MAX_MESSAGE_BYTES,
     ) -> None:
+        """Create a client.
+
+        Args:
+            address: host:port of the server. Ignored when `channel` is given.
+            channel: An externally managed channel to use instead of creating
+                one. Message size limits are then the caller's responsibility.
+            max_message_bytes: Send/receive message size limit for the
+                internally created channel. Defaults to 100 MiB to match the
+                server.
+        """
         if channel is not None:
             self._channel = channel
             self._owns_channel = False
         else:
-            self._channel = grpc.insecure_channel(address)
+            self._channel = grpc.insecure_channel(
+                address,
+                options=[
+                    ("grpc.max_receive_message_length", max_message_bytes),
+                    ("grpc.max_send_message_length", max_message_bytes),
+                ],
+            )
             self._owns_channel = True
         self._stub = markitdown_pb2_grpc.MarkItDownServiceStub(self._channel)
 

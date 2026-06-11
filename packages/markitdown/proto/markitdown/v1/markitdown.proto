@@ -73,7 +73,8 @@ message Source {
     // An http:, https:, file:, or data: URI fetched by the server.
     string uri = 2;
     // Raw document bytes supplied inline. Subject to the server's maximum
-    // receive message size (4 MiB by default).
+    // receive message size (100 MiB by default; see
+    // --max-receive-message-bytes).
     bytes content = 3;
   }
 

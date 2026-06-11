@@ -24,6 +24,11 @@ from .v1 import markitdown_pb2, markitdown_pb2_grpc
 
 _DEFAULT_MARKDOWN_CHUNK_SIZE_BYTES = 4096
 
+# Generous default so large documents (big PDFs, Office files with embedded
+# media) can be sent inline via Source.content. Operators can lower this with
+# --max-receive-message-bytes when exposing the server more broadly.
+DEFAULT_MAX_MESSAGE_BYTES = 100 * 1024 * 1024
+
 _CU_FILE_TYPE_MAP: dict[int, ContentUnderstandingFileType] = {
     markitdown_pb2.CONTENT_UNDERSTANDING_FILE_TYPE_PDF: ContentUnderstandingFileType.PDF,
     markitdown_pb2.CONTENT_UNDERSTANDING_FILE_TYPE_DOCX: ContentUnderstandingFileType.DOCX,
@@ -398,7 +403,7 @@ def _enable_health_and_reflection(grpc_server: grpc.Server) -> None:
 def serve(
     bind_address: str = "127.0.0.1:50051",
     max_workers: int = 10,
-    max_receive_message_bytes: int | None = None,
+    max_receive_message_bytes: int = DEFAULT_MAX_MESSAGE_BYTES,
 ) -> grpc.Server:
     """Start a MarkItDown gRPC server and return it.
 
@@ -408,12 +413,13 @@ def serve(
             network path is otherwise secured.
         max_workers: Maximum worker threads for handling requests.
         max_receive_message_bytes: Upper bound for incoming request size,
-            which limits inline `Source.content` payloads. Defaults to the
-            gRPC default (4 MiB).
+            which limits inline `Source.content` payloads. Defaults to
+            100 MiB.
     """
-    options = []
-    if max_receive_message_bytes is not None:
-        options.append(("grpc.max_receive_message_length", max_receive_message_bytes))
+    options = [
+        ("grpc.max_receive_message_length", max_receive_message_bytes),
+        ("grpc.max_send_message_length", max_receive_message_bytes),
+    ]
 
     grpc_server = grpc.server(
         futures.ThreadPoolExecutor(max_workers=max_workers), options=options
@@ -443,10 +449,10 @@ def main() -> None:
     parser.add_argument(
         "--max-receive-message-bytes",
         type=int,
-        default=None,
+        default=DEFAULT_MAX_MESSAGE_BYTES,
         help=(
             "Maximum size of incoming request messages in bytes, which bounds "
-            "inline Source.content payloads (default: gRPC's 4 MiB)."
+            "inline Source.content payloads (default: 100 MiB)."
         ),
     )
     args = parser.parse_args()

@@ -230,6 +230,33 @@ def test_health_service_reports_serving(grpc_channel):
     assert response.status == health_pb2.HealthCheckResponse.SERVING
 
 
+def test_large_document_round_trip(tmp_path: Path):
+    """Documents larger than gRPC's stock 4 MiB limit round-trip by default."""
+    from markitdown.grpc import MarkItDownClient
+    from markitdown.grpc.server import serve
+
+    import socket
+
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+
+    server = serve(bind_address=f"127.0.0.1:{port}", max_workers=1)
+    try:
+        # ~8 MiB of text: above the 4 MiB stock limit in both directions.
+        large_text = ("lorem ipsum dolor sit amet " * 38 + "\n") * 8192
+        content = large_text.encode("utf-8")
+        assert len(content) > 4 * 1024 * 1024
+
+        with MarkItDownClient(f"127.0.0.1:{port}") as client:
+            result = client.convert(content=content, extension=".txt")
+
+        assert len(result.markdown) > 4 * 1024 * 1024
+        assert result.markdown.startswith("lorem ipsum")
+    finally:
+        server.stop(grace=None)
+
+
 def test_reflection_lists_markitdown_service(grpc_channel):
     reflection_pb2 = pytest.importorskip("grpc_reflection.v1alpha.reflection_pb2")
     reflection_pb2_grpc = pytest.importorskip(
