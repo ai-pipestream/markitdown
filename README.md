@@ -289,13 +289,22 @@ docker run --rm -i markitdown:latest < ~/your-file.pdf > output.md
 
 ### gRPC
 
-MarkItDown includes a built-in gRPC server and client.
+MarkItDown includes a built-in gRPC server and client, available via the `[grpc]` optional dependency:
+
+```sh
+pip install 'markitdown[grpc]'
+```
+
+> [!IMPORTANT]
+> The gRPC server is unauthenticated and performs I/O with the privileges of the server process: requests can reference server-side file paths and URIs. Bind to localhost (the default) unless the network path is otherwise secured, and review the [Security Considerations](#security-considerations) section before deploying it.
 
 **Start the server:**
 
 ```sh
 markitdown-grpc --bind-address 127.0.0.1:50051
 ```
+
+The server registers the standard [gRPC health checking](https://grpc.io/docs/guides/health-checking/) and [server reflection](https://grpc.io/docs/guides/reflection/) services, so it works out of the box with Kubernetes health probes and tools like `grpcurl`.
 
 **CLI client** — send a convert request to the running server:
 
@@ -346,7 +355,25 @@ with MarkItDownClient() as client:
             parts.append(event.markdown_chunk.markdown)
     markdown = "".join(parts)
     print(markdown)
+
+# Structured document streaming — receive typed elements (headings,
+# paragraphs, tables, lists, code blocks, images, ...) so downstream
+# systems can process document structure without re-parsing Markdown
+with MarkItDownClient() as client:
+    for event in client.convert_document_stream(local_path="path/to/file.pdf"):
+        if not event.HasField("element"):
+            continue
+        element = event.element
+        kind = element.WhichOneof("kind")
+        if kind == "heading":
+            print(f"H{element.heading.level}: {element.heading.text}")
+        elif kind == "table":
+            print(f"table with {len(element.table.rows)} rows")
+        elif kind == "image":
+            print(f"image: {element.image.url} (alt: {element.image.alt_text})")
 ```
+
+Both streaming RPCs deliver results as ordered events (`started`, then content, then `completed`). Note that the conversion itself completes server-side before streaming begins; streaming reduces time-to-first-byte on the wire and keeps individual messages small.
 
 ## Contributing
 

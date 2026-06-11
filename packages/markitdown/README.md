@@ -44,10 +44,19 @@ print(result.text_content)
 
 ### gRPC API
 
+Install the gRPC extra first: `pip install 'markitdown[grpc]'`
+
 - Protobuf definition: `proto/markitdown/v1/markitdown.proto`
 - Server entrypoint: `markitdown-grpc --bind-address 127.0.0.1:50051`
+- Stub regeneration: `./scripts/regenerate-grpc.sh`
 
-The `Convert` RPC returns full markdown in a single response, and `ConvertStream` returns strongly typed streaming chunks.
+Three RPCs are available:
+
+- `Convert` returns the full Markdown in a single response.
+- `ConvertStream` returns the Markdown as an ordered stream of chunks.
+- `ConvertDocumentStream` returns the document as an ordered stream of structured elements (headings, paragraphs, tables, lists, code blocks, images, ...).
+
+The server is unauthenticated and performs I/O with the privileges of the server process; bind to localhost unless the network path is otherwise secured. See [Security Considerations](https://github.com/microsoft/markitdown#security-considerations).
 
 ### More Information
 
