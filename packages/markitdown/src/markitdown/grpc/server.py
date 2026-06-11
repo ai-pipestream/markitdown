@@ -8,19 +8,19 @@ from typing import Iterable, Iterator, NoReturn
 
 import grpc
 
-from markitdown import MarkItDown
-from markitdown._base_converter import DocumentConverterResult
-from markitdown._exceptions import (
+from markitdown import (
+    DocumentConverterResult,
     FileConversionException,
+    MarkItDown,
     MarkItDownException,
     MissingDependencyException,
+    StreamInfo,
     UnsupportedFormatException,
 )
-from markitdown._stream_info import StreamInfo
 from markitdown.converters import ContentUnderstandingFileType
 
+from . import _segmenter
 from .v1 import markitdown_pb2, markitdown_pb2_grpc
-
 
 _DEFAULT_MARKDOWN_CHUNK_SIZE_BYTES = 4096
 
@@ -59,7 +59,9 @@ _CU_FILE_TYPE_MAP: dict[int, ContentUnderstandingFileType] = {
 }
 
 
-def _abort_from_exception(context: grpc.ServicerContext, exc: BaseException) -> NoReturn:
+def _abort_from_exception(
+    context: grpc.ServicerContext, exc: BaseException
+) -> NoReturn:
     if isinstance(exc, FileNotFoundError):
         context.abort(grpc.StatusCode.NOT_FOUND, str(exc))
     if isinstance(exc, UnsupportedFormatException):
@@ -130,9 +132,46 @@ class MarkItDownServiceServicer(markitdown_pb2_grpc.MarkItDownServiceServicer):
             completed.title = conversion_result.title
         yield markitdown_pb2.ConvertStreamResponse(completed=completed)
 
+    def ConvertDocumentStream(
+        self,
+        request: markitdown_pb2.ConvertDocumentStreamRequest,
+        context: grpc.ServicerContext,
+    ) -> Iterator[markitdown_pb2.ConvertDocumentStreamResponse]:
+        source_kind = request.source.WhichOneof("input")
+        if source_kind is None:
+            context.abort(
+                grpc.StatusCode.INVALID_ARGUMENT,
+                "source.input is required and must set one of local_path, uri, or content.",
+            )
+
+        yield markitdown_pb2.ConvertDocumentStreamResponse(
+            started=markitdown_pb2.ConversionStarted(source_kind=source_kind)
+        )
+
+        try:
+            conversion_result = self._convert_request(request, context)
+        except Exception as exc:
+            _abort_from_exception(context, exc)
+
+        element_index = 0
+        for block in _segmenter.segment_markdown(conversion_result.markdown):
+            yield markitdown_pb2.ConvertDocumentStreamResponse(
+                element=_to_proto_element(block, element_index)
+            )
+            element_index += 1
+
+        completed = markitdown_pb2.DocumentStreamCompleted(total_elements=element_index)
+        if conversion_result.title:
+            completed.title = conversion_result.title
+        yield markitdown_pb2.ConvertDocumentStreamResponse(completed=completed)
+
     def _convert_request(
         self,
-        request: markitdown_pb2.ConvertRequest | markitdown_pb2.ConvertStreamRequest,
+        request: (
+            markitdown_pb2.ConvertRequest
+            | markitdown_pb2.ConvertStreamRequest
+            | markitdown_pb2.ConvertDocumentStreamRequest
+        ),
         context: grpc.ServicerContext,
     ) -> DocumentConverterResult:
         source_kind = request.source.WhichOneof("input")
@@ -237,7 +276,9 @@ def _to_cu_file_types(
             continue
         mapped = _CU_FILE_TYPE_MAP.get(file_type)
         if mapped is None:
-            raise ValueError(f"Unknown content_understanding.file_types value: {file_type}")
+            raise ValueError(
+                f"Unknown content_understanding.file_types value: {file_type}"
+            )
         converted.append(mapped)
     return converted
 
@@ -288,11 +329,99 @@ def _chunk_markdown(markdown: str, chunk_size: int) -> Iterator[str]:
         start = end
 
 
-def serve(bind_address: str = "127.0.0.1:50051", max_workers: int = 10) -> grpc.Server:
-    grpc_server = grpc.server(futures.ThreadPoolExecutor(max_workers=max_workers))
+def _to_proto_element(
+    block: _segmenter.DocumentBlock, element_index: int
+) -> markitdown_pb2.DocumentElement:
+    element = markitdown_pb2.DocumentElement(element_index=element_index)
+
+    if isinstance(block, _segmenter.HeadingBlock):
+        element.heading.level = block.level
+        element.heading.text = block.text
+    elif isinstance(block, _segmenter.TableBlock):
+        element.table.markdown = block.markdown
+        for row in block.rows:
+            element.table.rows.add(cells=row)
+    elif isinstance(block, _segmenter.ListBlock):
+        element.list.markdown = block.markdown
+        element.list.ordered = block.ordered
+        element.list.items.extend(block.items)
+    elif isinstance(block, _segmenter.CodeBlock):
+        element.code_block.language = block.language
+        element.code_block.code = block.code
+    elif isinstance(block, _segmenter.ImageBlock):
+        element.image.alt_text = block.alt_text
+        element.image.url = block.url
+        if block.title is not None:
+            element.image.title = block.title
+    elif isinstance(block, _segmenter.BlockQuoteBlock):
+        element.block_quote.text = block.text
+    elif isinstance(block, _segmenter.HorizontalRuleBlock):
+        element.horizontal_rule.SetInParent()
+    else:
+        assert isinstance(block, _segmenter.ParagraphBlock)
+        element.paragraph.text = block.text
+
+    return element
+
+
+def _enable_health_and_reflection(grpc_server: grpc.Server) -> None:
+    """Register standard health and reflection services when available.
+
+    Both packages ship with the markitdown[grpc] extra; the guards keep the
+    server usable in minimal environments where only grpcio is installed.
+    """
+    service_names = [
+        markitdown_pb2.DESCRIPTOR.services_by_name["MarkItDownService"].full_name,
+    ]
+
+    try:
+        from grpc_health.v1 import health, health_pb2, health_pb2_grpc
+
+        health_servicer = health.HealthServicer()
+        health_pb2_grpc.add_HealthServicer_to_server(health_servicer, grpc_server)
+        for service_name in [*service_names, ""]:
+            health_servicer.set(service_name, health_pb2.HealthCheckResponse.SERVING)
+        service_names.append(health.SERVICE_NAME)
+    except ImportError:
+        pass
+
+    try:
+        from grpc_reflection.v1alpha import reflection
+
+        reflection.enable_server_reflection(
+            [*service_names, reflection.SERVICE_NAME], grpc_server
+        )
+    except ImportError:
+        pass
+
+
+def serve(
+    bind_address: str = "127.0.0.1:50051",
+    max_workers: int = 10,
+    max_receive_message_bytes: int | None = None,
+) -> grpc.Server:
+    """Start a MarkItDown gRPC server and return it.
+
+    Args:
+        bind_address: host:port to listen on. The server is insecure
+            (no TLS, no authentication); bind to localhost unless the
+            network path is otherwise secured.
+        max_workers: Maximum worker threads for handling requests.
+        max_receive_message_bytes: Upper bound for incoming request size,
+            which limits inline `Source.content` payloads. Defaults to the
+            gRPC default (4 MiB).
+    """
+    options = []
+    if max_receive_message_bytes is not None:
+        options.append(("grpc.max_receive_message_length", max_receive_message_bytes))
+
+    grpc_server = grpc.server(
+        futures.ThreadPoolExecutor(max_workers=max_workers), options=options
+    )
     markitdown_pb2_grpc.add_MarkItDownServiceServicer_to_server(
         MarkItDownServiceServicer(), grpc_server
     )
+    _enable_health_and_reflection(grpc_server)
     grpc_server.add_insecure_port(bind_address)
     grpc_server.start()
     return grpc_server
@@ -311,8 +440,25 @@ def main() -> None:
         default=10,
         help="Maximum worker threads for handling requests.",
     )
+    parser.add_argument(
+        "--max-receive-message-bytes",
+        type=int,
+        default=None,
+        help=(
+            "Maximum size of incoming request messages in bytes, which bounds "
+            "inline Source.content payloads (default: gRPC's 4 MiB)."
+        ),
+    )
     args = parser.parse_args()
 
     _warn_if_non_local_bind(args.bind_address)
-    grpc_server = serve(bind_address=args.bind_address, max_workers=args.max_workers)
+    grpc_server = serve(
+        bind_address=args.bind_address,
+        max_workers=args.max_workers,
+        max_receive_message_bytes=args.max_receive_message_bytes,
+    )
     grpc_server.wait_for_termination()
+
+
+if __name__ == "__main__":
+    main()

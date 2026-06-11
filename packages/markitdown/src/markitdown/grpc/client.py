@@ -12,7 +12,9 @@ from .v1 import markitdown_pb2, markitdown_pb2_grpc
 class MarkItDownClient:
     """A simple gRPC client for the MarkItDown service."""
 
-    def __init__(self, address: str = "127.0.0.1:50051", channel: grpc.Channel | None = None) -> None:
+    def __init__(
+        self, address: str = "127.0.0.1:50051", channel: grpc.Channel | None = None
+    ) -> None:
         if channel is not None:
             self._channel = channel
             self._owns_channel = False
@@ -90,6 +92,41 @@ class MarkItDownClient:
             streaming_options=streaming_options,
         )
         yield from self._stub.ConvertStream(request)
+
+    def convert_document_stream(
+        self,
+        *,
+        local_path: str | None = None,
+        uri: str | None = None,
+        content: bytes | None = None,
+        mimetype: str | None = None,
+        extension: str | None = None,
+        charset: str | None = None,
+        keep_data_uris: bool | None = None,
+    ) -> Iterator[markitdown_pb2.ConvertDocumentStreamResponse]:
+        """Convert a document and yield structured document elements.
+
+        Events arrive in order: one `started`, zero or more `element`
+        (headings, paragraphs, tables, lists, code blocks, images, ...),
+        then one `completed`.
+        """
+        source = _build_source(
+            local_path=local_path,
+            uri=uri,
+            content=content,
+            mimetype=mimetype,
+            extension=extension,
+            charset=charset,
+        )
+        conversion_options = markitdown_pb2.ConversionOptions()
+        if keep_data_uris is not None:
+            conversion_options.keep_data_uris = keep_data_uris
+
+        request = markitdown_pb2.ConvertDocumentStreamRequest(
+            source=source,
+            conversion_options=conversion_options,
+        )
+        yield from self._stub.ConvertDocumentStream(request)
 
 
 def _build_source(
@@ -202,12 +239,27 @@ def main() -> None:
 
     with MarkItDownClient(address=args.address) as client:
         if args.uri:
-            kwargs = dict(uri=args.uri, mimetype=args.mime_type, extension=extension, charset=args.charset)
+            kwargs = dict(
+                uri=args.uri,
+                mimetype=args.mime_type,
+                extension=extension,
+                charset=args.charset,
+            )
         elif args.filename:
-            kwargs = dict(local_path=args.filename, mimetype=args.mime_type, extension=extension, charset=args.charset)
+            kwargs = dict(
+                local_path=args.filename,
+                mimetype=args.mime_type,
+                extension=extension,
+                charset=args.charset,
+            )
         else:
             data = sys.stdin.buffer.read()
-            kwargs = dict(content=data, mimetype=args.mime_type, extension=extension, charset=args.charset)
+            kwargs = dict(
+                content=data,
+                mimetype=args.mime_type,
+                extension=extension,
+                charset=args.charset,
+            )
 
         if args.stream:
             markdown_parts: list[str] = []
@@ -223,11 +275,11 @@ def main() -> None:
         with open(args.output, "w", encoding="utf-8") as f:
             f.write(markdown)
     else:
-        print(
-            markdown.encode(sys.stdout.encoding, errors="replace").decode(
-                sys.stdout.encoding
-            )
-        )
+        try:
+            sys.stdout.reconfigure(errors="replace")
+        except AttributeError:
+            pass  # stdout replaced by a non-reconfigurable stream
+        print(markdown)
 
 
 if __name__ == "__main__":

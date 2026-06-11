@@ -6,25 +6,33 @@ from pathlib import Path
 import grpc
 import pytest
 
-from markitdown.grpc.server import MarkItDownServiceServicer
+from markitdown.grpc.server import (
+    MarkItDownServiceServicer,
+    _enable_health_and_reflection,
+)
 from markitdown.grpc.v1 import markitdown_pb2, markitdown_pb2_grpc
 
 
 @pytest.fixture
-def grpc_client():
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=1))
+def grpc_channel():
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=2))
     markitdown_pb2_grpc.add_MarkItDownServiceServicer_to_server(
         MarkItDownServiceServicer(), server
     )
+    _enable_health_and_reflection(server)
     port = server.add_insecure_port("127.0.0.1:0")
     server.start()
     channel = grpc.insecure_channel(f"127.0.0.1:{port}")
-    stub = markitdown_pb2_grpc.MarkItDownServiceStub(channel)
     try:
-        yield stub
+        yield channel
     finally:
         channel.close()
         server.stop(grace=None)
+
+
+@pytest.fixture
+def grpc_client(grpc_channel):
+    return markitdown_pb2_grpc.MarkItDownServiceStub(grpc_channel)
 
 
 def test_convert_local_file(grpc_client, tmp_path: Path):
@@ -134,3 +142,107 @@ def test_convert_stream_yields_started_before_chunks(grpc_client):
     assert stream[0].HasField("started")
     assert stream[0].started.source_kind == "content"
     assert any(event.HasField("markdown_chunk") for event in stream)
+
+
+def test_convert_stream_zero_chunk_size_returns_invalid_argument(grpc_client):
+    request = markitdown_pb2.ConvertStreamRequest(
+        source=markitdown_pb2.Source(
+            content=b"hello\n",
+            stream_info=markitdown_pb2.StreamInfo(extension=".txt"),
+        ),
+        streaming_options=markitdown_pb2.StreamingOptions(markdown_chunk_size_bytes=0),
+    )
+
+    with pytest.raises(grpc.RpcError) as exc_info:
+        list(grpc_client.ConvertStream(request))
+
+    assert exc_info.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+
+
+def test_convert_document_stream_returns_structured_elements(grpc_client):
+    markdown_source = (
+        b"# Title\n"
+        b"\n"
+        b"Intro paragraph.\n"
+        b"\n"
+        b"| A | B |\n"
+        b"| - | - |\n"
+        b"| 1 | 2 |\n"
+        b"\n"
+        b"- alpha\n"
+        b"- beta\n"
+    )
+    request = markitdown_pb2.ConvertDocumentStreamRequest(
+        source=markitdown_pb2.Source(
+            content=markdown_source,
+            stream_info=markitdown_pb2.StreamInfo(
+                extension=".md", mimetype="text/markdown", charset="utf-8"
+            ),
+        ),
+    )
+
+    stream = list(grpc_client.ConvertDocumentStream(request))
+
+    assert stream[0].HasField("started")
+    assert stream[-1].HasField("completed")
+
+    elements = [event.element for event in stream if event.HasField("element")]
+    assert stream[-1].completed.total_elements == len(elements)
+    assert [element.element_index for element in elements] == list(range(len(elements)))
+
+    kinds = [element.WhichOneof("kind") for element in elements]
+    assert "heading" in kinds
+    assert "paragraph" in kinds
+    assert "table" in kinds
+    assert "list" in kinds
+
+    heading = next(e.heading for e in elements if e.WhichOneof("kind") == "heading")
+    assert heading.level == 1
+    assert heading.text == "Title"
+
+    table = next(e.table for e in elements if e.WhichOneof("kind") == "table")
+    assert [list(row.cells) for row in table.rows] == [["A", "B"], ["1", "2"]]
+
+    list_block = next(e.list for e in elements if e.WhichOneof("kind") == "list")
+    assert not list_block.ordered
+    assert list(list_block.items) == ["alpha", "beta"]
+
+
+def test_convert_document_stream_requires_source(grpc_client):
+    with pytest.raises(grpc.RpcError) as exc_info:
+        list(
+            grpc_client.ConvertDocumentStream(
+                markitdown_pb2.ConvertDocumentStreamRequest()
+            )
+        )
+
+    assert exc_info.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+
+
+def test_health_service_reports_serving(grpc_channel):
+    health_pb2 = pytest.importorskip("grpc_health.v1.health_pb2")
+    health_pb2_grpc = pytest.importorskip("grpc_health.v1.health_pb2_grpc")
+
+    health_stub = health_pb2_grpc.HealthStub(grpc_channel)
+    response = health_stub.Check(
+        health_pb2.HealthCheckRequest(service="markitdown.v1.MarkItDownService")
+    )
+    assert response.status == health_pb2.HealthCheckResponse.SERVING
+
+
+def test_reflection_lists_markitdown_service(grpc_channel):
+    reflection_pb2 = pytest.importorskip("grpc_reflection.v1alpha.reflection_pb2")
+    reflection_pb2_grpc = pytest.importorskip(
+        "grpc_reflection.v1alpha.reflection_pb2_grpc"
+    )
+
+    reflection_stub = reflection_pb2_grpc.ServerReflectionStub(grpc_channel)
+    responses = reflection_stub.ServerReflectionInfo(
+        iter([reflection_pb2.ServerReflectionRequest(list_services="")])
+    )
+    services = {
+        service.name
+        for response in responses
+        for service in response.list_services_response.service
+    }
+    assert "markitdown.v1.MarkItDownService" in services
