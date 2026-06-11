@@ -230,6 +230,92 @@ def test_health_service_reports_serving(grpc_channel):
     assert response.status == health_pb2.HealthCheckResponse.SERVING
 
 
+def test_convert_stream_incremental_pdf_streams_pages(grpc_client):
+    pdf_path = (
+        Path(__file__).parent / "test_files" / "REPAIR-2022-INV-001_multipage.pdf"
+    )
+    request = markitdown_pb2.ConvertStreamRequest(
+        source=markitdown_pb2.Source(
+            content=pdf_path.read_bytes(),
+            stream_info=markitdown_pb2.StreamInfo(extension=".pdf"),
+        ),
+        streaming_options=markitdown_pb2.StreamingOptions(
+            markdown_chunk_size_bytes=256, experimental_incremental=True
+        ),
+    )
+
+    stream = list(grpc_client.ConvertStream(request))
+
+    assert stream[0].HasField("started")
+    chunks = [
+        event.markdown_chunk for event in stream if event.HasField("markdown_chunk")
+    ]
+    assert len(chunks) > 1
+    assert [chunk.chunk_index for chunk in chunks] == list(range(len(chunks)))
+    assert chunks[-1].is_last
+    assert all(not chunk.is_last for chunk in chunks[:-1])
+    assert stream[-1].HasField("completed")
+    assert stream[-1].completed.total_chunks == len(chunks)
+
+    # Incremental reassembly must match whole-document conversion exactly
+    # for documents with table/form pages.
+    unary = grpc_client.Convert(
+        markitdown_pb2.ConvertRequest(
+            source=markitdown_pb2.Source(
+                content=pdf_path.read_bytes(),
+                stream_info=markitdown_pb2.StreamInfo(extension=".pdf"),
+            )
+        )
+    )
+    assert "".join(chunk.markdown for chunk in chunks) == unary.result.markdown
+
+
+def test_convert_document_stream_incremental_pptx(grpc_client):
+    pptx_path = Path(__file__).parent / "test_files" / "test.pptx"
+    request = markitdown_pb2.ConvertDocumentStreamRequest(
+        source=markitdown_pb2.Source(
+            content=pptx_path.read_bytes(),
+            stream_info=markitdown_pb2.StreamInfo(extension=".pptx"),
+        ),
+        streaming_options=markitdown_pb2.StreamingOptions(
+            experimental_incremental=True
+        ),
+    )
+
+    stream = list(grpc_client.ConvertDocumentStream(request))
+
+    assert stream[0].HasField("started")
+    assert stream[-1].HasField("completed")
+    elements = [event.element for event in stream if event.HasField("element")]
+    assert stream[-1].completed.total_elements == len(elements)
+    assert [element.element_index for element in elements] == list(range(len(elements)))
+
+    kinds = {element.WhichOneof("kind") for element in elements}
+    assert "heading" in kinds
+
+
+def test_convert_stream_incremental_falls_back_for_unsupported_format(grpc_client):
+    request = markitdown_pb2.ConvertStreamRequest(
+        source=markitdown_pb2.Source(
+            content=b"plain text\n",
+            stream_info=markitdown_pb2.StreamInfo(extension=".txt"),
+        ),
+        streaming_options=markitdown_pb2.StreamingOptions(
+            experimental_incremental=True
+        ),
+    )
+
+    stream = list(grpc_client.ConvertStream(request))
+
+    chunks = [
+        event.markdown_chunk.markdown
+        for event in stream
+        if event.HasField("markdown_chunk")
+    ]
+    assert "".join(chunks).startswith("plain text")
+    assert stream[-1].HasField("completed")
+
+
 def test_large_document_round_trip(tmp_path: Path):
     """Documents larger than gRPC's stock 4 MiB limit round-trip by default."""
     from markitdown.grpc import MarkItDownClient

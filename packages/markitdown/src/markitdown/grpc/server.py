@@ -18,6 +18,7 @@ from markitdown import (
     UnsupportedFormatException,
 )
 from markitdown.converters import ContentUnderstandingFileType
+from markitdown.streaming import StreamingConverterController
 
 from . import _segmenter
 from .v1 import markitdown_pb2, markitdown_pb2_grpc
@@ -85,6 +86,9 @@ def _abort_from_exception(
 
 
 class MarkItDownServiceServicer(markitdown_pb2_grpc.MarkItDownServiceServicer):
+    def __init__(self) -> None:
+        self._streaming_controller = StreamingConverterController()
+
     def Convert(
         self, request: markitdown_pb2.ConvertRequest, context: grpc.ServicerContext
     ) -> markitdown_pb2.ConvertResponse:
@@ -114,27 +118,44 @@ class MarkItDownServiceServicer(markitdown_pb2_grpc.MarkItDownServiceServicer):
             started=markitdown_pb2.ConversionStarted(source_kind=source_kind)
         )
 
+        title: str | None = None
         try:
-            conversion_result = self._convert_request(request, context)
+            fragments = self._try_incremental_fragments(request)
+            if fragments is not None:
+                chunk_count = 0
+                for markdown_chunk, is_last in _iter_incremental_chunks(
+                    fragments, chunk_size
+                ):
+                    yield markitdown_pb2.ConvertStreamResponse(
+                        markdown_chunk=markitdown_pb2.MarkdownChunk(
+                            chunk_index=chunk_count,
+                            markdown=markdown_chunk,
+                            is_last=is_last,
+                        )
+                    )
+                    chunk_count += 1
+                total_chunks = chunk_count
+            else:
+                conversion_result = self._convert_request(request, context)
+                title = conversion_result.title
+                chunks = list(_chunk_markdown(conversion_result.markdown, chunk_size))
+                if not chunks:
+                    chunks = [""]
+                for chunk_index, markdown_chunk in enumerate(chunks):
+                    yield markitdown_pb2.ConvertStreamResponse(
+                        markdown_chunk=markitdown_pb2.MarkdownChunk(
+                            chunk_index=chunk_index,
+                            markdown=markdown_chunk,
+                            is_last=chunk_index == len(chunks) - 1,
+                        )
+                    )
+                total_chunks = len(chunks)
         except Exception as exc:
             _abort_from_exception(context, exc)
 
-        chunks = list(_chunk_markdown(conversion_result.markdown, chunk_size))
-        if not chunks:
-            chunks = [""]
-
-        for chunk_index, markdown_chunk in enumerate(chunks):
-            yield markitdown_pb2.ConvertStreamResponse(
-                markdown_chunk=markitdown_pb2.MarkdownChunk(
-                    chunk_index=chunk_index,
-                    markdown=markdown_chunk,
-                    is_last=chunk_index == len(chunks) - 1,
-                )
-            )
-
-        completed = markitdown_pb2.ConversionCompleted(total_chunks=len(chunks))
-        if conversion_result.title:
-            completed.title = conversion_result.title
+        completed = markitdown_pb2.ConversionCompleted(total_chunks=total_chunks)
+        if title:
+            completed.title = title
         yield markitdown_pb2.ConvertStreamResponse(completed=completed)
 
     def ConvertDocumentStream(
@@ -153,22 +174,100 @@ class MarkItDownServiceServicer(markitdown_pb2_grpc.MarkItDownServiceServicer):
             started=markitdown_pb2.ConversionStarted(source_kind=source_kind)
         )
 
+        title: str | None = None
+        element_index = 0
         try:
-            conversion_result = self._convert_request(request, context)
+            fragments = self._try_incremental_fragments(request)
+            if fragments is not None:
+                # Fragments are separated by blank lines, so blocks never
+                # span fragments and per-fragment segmentation matches
+                # whole-document segmentation.
+                for fragment in fragments:
+                    for block in _segmenter.segment_markdown(fragment):
+                        yield markitdown_pb2.ConvertDocumentStreamResponse(
+                            element=_to_proto_element(block, element_index)
+                        )
+                        element_index += 1
+            else:
+                conversion_result = self._convert_request(request, context)
+                title = conversion_result.title
+                for block in _segmenter.segment_markdown(conversion_result.markdown):
+                    yield markitdown_pb2.ConvertDocumentStreamResponse(
+                        element=_to_proto_element(block, element_index)
+                    )
+                    element_index += 1
         except Exception as exc:
             _abort_from_exception(context, exc)
 
-        element_index = 0
-        for block in _segmenter.segment_markdown(conversion_result.markdown):
-            yield markitdown_pb2.ConvertDocumentStreamResponse(
-                element=_to_proto_element(block, element_index)
-            )
-            element_index += 1
-
         completed = markitdown_pb2.DocumentStreamCompleted(total_elements=element_index)
-        if conversion_result.title:
-            completed.title = conversion_result.title
+        if title:
+            completed.title = title
         yield markitdown_pb2.ConvertDocumentStreamResponse(completed=completed)
+
+    def _try_incremental_fragments(
+        self,
+        request: (
+            markitdown_pb2.ConvertStreamRequest
+            | markitdown_pb2.ConvertDocumentStreamRequest
+        ),
+    ) -> Iterator[str] | None:
+        """Return an incremental fragment iterator, or None to use the
+        whole-document conversion path.
+
+        Incremental conversion is experimental and opt-in via
+        streaming_options.experimental_incremental. It only applies to
+        inline content and local paths with a format a streaming converter
+        accepts, and is skipped when service options route conversion
+        elsewhere (Azure backends, plugins).
+        """
+        if not (
+            request.HasField("streaming_options")
+            and request.streaming_options.experimental_incremental
+        ):
+            return None
+
+        service_options = request.service_options
+        if (
+            service_options.HasField("document_intelligence")
+            or service_options.HasField("content_understanding")
+            or (
+                service_options.HasField("enable_plugins")
+                and service_options.enable_plugins
+            )
+            or (
+                service_options.HasField("enable_builtins")
+                and not service_options.enable_builtins
+            )
+        ):
+            return None
+
+        source_kind = request.source.WhichOneof("input")
+        if source_kind == "content":
+            file_stream: io.BufferedIOBase = io.BytesIO(request.source.content)
+        elif source_kind == "local_path":
+            file_stream = open(request.source.local_path, "rb")
+        else:
+            return None  # URIs use the standard path, which handles fetching.
+
+        stream_info = _to_stream_info(request.source.stream_info) or StreamInfo()
+        kwargs: dict[str, object] = {}
+        if request.conversion_options.HasField("keep_data_uris"):
+            kwargs["keep_data_uris"] = request.conversion_options.keep_data_uris
+
+        fragments = self._streaming_controller.iter_markdown(
+            file_stream, stream_info, **kwargs
+        )
+        if fragments is None:
+            file_stream.close()
+            return None
+
+        def _closing() -> Iterator[str]:
+            try:
+                yield from fragments
+            finally:
+                file_stream.close()
+
+        return _closing()
 
     def _convert_request(
         self,
@@ -332,6 +431,29 @@ def _chunk_markdown(markdown: str, chunk_size: int) -> Iterator[str]:
         end = min(start + chunk_size, len(markdown))
         yield markdown[start:end]
         start = end
+
+
+def _iter_incremental_chunks(
+    fragments: Iterator[str], chunk_size: int
+) -> Iterator[tuple[str, bool]]:
+    """Re-chunk incremental markdown fragments into (chunk, is_last) pairs.
+
+    Joins fragments with a blank line (matching whole-document conversion
+    output) and emits fixed-size chunks as soon as they fill, holding back
+    a partial tail so the final chunk can be flagged is_last without
+    waiting for the whole document.
+    """
+    buffer = ""
+    first = True
+    for fragment in fragments:
+        if not first:
+            buffer += "\n\n"
+        first = False
+        buffer += fragment
+        while len(buffer) > chunk_size:
+            yield buffer[:chunk_size], False
+            buffer = buffer[chunk_size:]
+    yield buffer, True
 
 
 def _to_proto_element(

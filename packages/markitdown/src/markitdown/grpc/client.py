@@ -90,8 +90,14 @@ class MarkItDownClient:
         charset: str | None = None,
         keep_data_uris: bool | None = None,
         chunk_size_bytes: int | None = None,
+        incremental: bool | None = None,
     ) -> Iterator[markitdown_pb2.ConvertStreamResponse]:
-        """Convert a document and yield streaming response events."""
+        """Convert a document and yield streaming response events.
+
+        Set `incremental=True` to opt into EXPERIMENTAL incremental
+        conversion: supported formats (PDF, PPTX) stream chunks as each
+        page or slide converts, instead of after the whole document.
+        """
         source = _build_source(
             local_path=local_path,
             uri=uri,
@@ -107,6 +113,8 @@ class MarkItDownClient:
         streaming_options = markitdown_pb2.StreamingOptions()
         if chunk_size_bytes is not None:
             streaming_options.markdown_chunk_size_bytes = chunk_size_bytes
+        if incremental is not None:
+            streaming_options.experimental_incremental = incremental
 
         request = markitdown_pb2.ConvertStreamRequest(
             source=source,
@@ -125,12 +133,17 @@ class MarkItDownClient:
         extension: str | None = None,
         charset: str | None = None,
         keep_data_uris: bool | None = None,
+        incremental: bool | None = None,
     ) -> Iterator[markitdown_pb2.ConvertDocumentStreamResponse]:
         """Convert a document and yield structured document elements.
 
         Events arrive in order: one `started`, zero or more `element`
         (headings, paragraphs, tables, lists, code blocks, images, ...),
         then one `completed`.
+
+        Set `incremental=True` to opt into EXPERIMENTAL incremental
+        conversion: supported formats (PDF, PPTX) stream elements as each
+        page or slide converts, instead of after the whole document.
         """
         source = _build_source(
             local_path=local_path,
@@ -144,9 +157,14 @@ class MarkItDownClient:
         if keep_data_uris is not None:
             conversion_options.keep_data_uris = keep_data_uris
 
+        streaming_options = markitdown_pb2.StreamingOptions()
+        if incremental is not None:
+            streaming_options.experimental_incremental = incremental
+
         request = markitdown_pb2.ConvertDocumentStreamRequest(
             source=source,
             conversion_options=conversion_options,
+            streaming_options=streaming_options,
         )
         yield from self._stub.ConvertDocumentStream(request)
 
