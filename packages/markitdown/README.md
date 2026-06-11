@@ -56,6 +56,8 @@ Three RPCs are available:
 - `ConvertStream` returns the Markdown as an ordered stream of chunks.
 - `ConvertDocumentStream` returns the document as an ordered stream of structured elements (headings, paragraphs, tables, lists, code blocks, images, ...).
 
+Both streaming RPCs support EXPERIMENTAL incremental conversion (`streaming_options.experimental_incremental`): PDF and PPTX results stream as each page or slide is processed, backed by the `markitdown.streaming` package.
+
 The server is unauthenticated and performs I/O with the privileges of the server process; bind to localhost unless the network path is otherwise secured. See [Security Considerations](https://github.com/microsoft/markitdown#security-considerations).
 
 ### More Information

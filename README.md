@@ -373,7 +373,20 @@ with MarkItDownClient() as client:
             print(f"image: {element.image.url} (alt: {element.image.alt_text})")
 ```
 
-Both streaming RPCs deliver results as ordered events (`started`, then content, then `completed`). Note that the conversion itself completes server-side before streaming begins; streaming reduces time-to-first-byte on the wire and keeps individual messages small.
+Both streaming RPCs deliver results as ordered events (`started`, then content, then `completed`). By default, the conversion completes server-side before streaming begins; streaming reduces time-to-first-byte on the wire and keeps individual messages small.
+
+**Experimental incremental conversion:** pass `incremental=True` (or set `streaming_options.experimental_incremental` in the proto) to stream results *while the document is still converting* — one fragment per PDF page or PPTX slide. On a 120-page PDF this cuts time-to-first-chunk from seconds to milliseconds. Unsupported formats fall back to whole-document conversion transparently.
+
+```python
+with MarkItDownClient() as client:
+    for event in client.convert_document_stream(
+        local_path="path/to/big.pdf", incremental=True
+    ):
+        if event.HasField("element"):
+            ...  # elements arrive as each page is processed
+```
+
+Incremental output is identical to whole-document conversion for PPTX and for PDFs containing tables/forms; pure-prose PDFs may differ slightly in whitespace (the standard converter re-extracts those in a single pass). Incremental conversion is skipped when Azure backends or plugins are configured.
 
 ## Contributing
 
