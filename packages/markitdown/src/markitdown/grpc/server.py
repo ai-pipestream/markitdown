@@ -2,13 +2,20 @@ from __future__ import annotations
 
 import argparse
 import io
+import sys
 from concurrent import futures
-from typing import Iterable, Iterator
+from typing import Iterable, Iterator, NoReturn
 
 import grpc
 
 from markitdown import MarkItDown
 from markitdown._base_converter import DocumentConverterResult
+from markitdown._exceptions import (
+    FileConversionException,
+    MarkItDownException,
+    MissingDependencyException,
+    UnsupportedFormatException,
+)
 from markitdown._stream_info import StreamInfo
 from markitdown.converters import ContentUnderstandingFileType
 
@@ -52,11 +59,32 @@ _CU_FILE_TYPE_MAP: dict[int, ContentUnderstandingFileType] = {
 }
 
 
+def _abort_from_exception(context: grpc.ServicerContext, exc: BaseException) -> NoReturn:
+    if isinstance(exc, FileNotFoundError):
+        context.abort(grpc.StatusCode.NOT_FOUND, str(exc))
+    if isinstance(exc, UnsupportedFormatException):
+        context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(exc))
+    if isinstance(exc, MissingDependencyException):
+        context.abort(grpc.StatusCode.FAILED_PRECONDITION, str(exc))
+    if isinstance(exc, FileConversionException):
+        context.abort(grpc.StatusCode.INTERNAL, str(exc))
+    if isinstance(exc, MarkItDownException):
+        context.abort(grpc.StatusCode.INTERNAL, str(exc))
+    if isinstance(exc, ValueError):
+        context.abort(grpc.StatusCode.INVALID_ARGUMENT, str(exc))
+    if isinstance(exc, OSError) and exc.errno == 2:
+        context.abort(grpc.StatusCode.NOT_FOUND, str(exc))
+    raise exc
+
+
 class MarkItDownServiceServicer(markitdown_pb2_grpc.MarkItDownServiceServicer):
     def Convert(
         self, request: markitdown_pb2.ConvertRequest, context: grpc.ServicerContext
     ) -> markitdown_pb2.ConvertResponse:
-        conversion_result = self._convert_request(request, context)
+        try:
+            conversion_result = self._convert_request(request, context)
+        except Exception as exc:
+            _abort_from_exception(context, exc)
         return markitdown_pb2.ConvertResponse(
             result=self._to_proto_result(conversion_result)
         )
@@ -66,25 +94,25 @@ class MarkItDownServiceServicer(markitdown_pb2_grpc.MarkItDownServiceServicer):
         request: markitdown_pb2.ConvertStreamRequest,
         context: grpc.ServicerContext,
     ) -> Iterator[markitdown_pb2.ConvertStreamResponse]:
-        conversion_result = self._convert_request(request, context)
-        source_kind = request.source.WhichOneof("input") or ""
+        source_kind = request.source.WhichOneof("input")
+        if source_kind is None:
+            context.abort(
+                grpc.StatusCode.INVALID_ARGUMENT,
+                "source.input is required and must set one of local_path, uri, or content.",
+            )
+
+        chunk_size = _resolve_chunk_size(request, context)
 
         yield markitdown_pb2.ConvertStreamResponse(
             started=markitdown_pb2.ConversionStarted(source_kind=source_kind)
         )
 
-        chunk_size = _DEFAULT_MARKDOWN_CHUNK_SIZE_BYTES
-        if request.HasField("streaming_options") and request.streaming_options.HasField(
-            "markdown_chunk_size_bytes"
-        ):
-            chunk_size = request.streaming_options.markdown_chunk_size_bytes
-        if chunk_size == 0:
-            context.abort(
-                grpc.StatusCode.INVALID_ARGUMENT,
-                "streaming_options.markdown_chunk_size_bytes must be greater than zero.",
-            )
+        try:
+            conversion_result = self._convert_request(request, context)
+        except Exception as exc:
+            _abort_from_exception(context, exc)
 
-        chunks = list(_chunk_markdown(conversion_result.markdown, int(chunk_size)))
+        chunks = list(_chunk_markdown(conversion_result.markdown, chunk_size))
         if not chunks:
             chunks = [""]
 
@@ -207,8 +235,46 @@ def _to_cu_file_types(
     for file_type in file_types:
         if file_type == markitdown_pb2.CONTENT_UNDERSTANDING_FILE_TYPE_UNSPECIFIED:
             continue
-        converted.append(_CU_FILE_TYPE_MAP[file_type])
+        mapped = _CU_FILE_TYPE_MAP.get(file_type)
+        if mapped is None:
+            raise ValueError(f"Unknown content_understanding.file_types value: {file_type}")
+        converted.append(mapped)
     return converted
+
+
+def _resolve_chunk_size(
+    request: markitdown_pb2.ConvertStreamRequest,
+    context: grpc.ServicerContext,
+) -> int:
+    chunk_size = _DEFAULT_MARKDOWN_CHUNK_SIZE_BYTES
+    if request.HasField("streaming_options") and request.streaming_options.HasField(
+        "markdown_chunk_size_bytes"
+    ):
+        chunk_size = request.streaming_options.markdown_chunk_size_bytes
+    if chunk_size == 0:
+        context.abort(
+            grpc.StatusCode.INVALID_ARGUMENT,
+            "streaming_options.markdown_chunk_size_bytes must be greater than zero.",
+        )
+    return int(chunk_size)
+
+
+def _warn_if_non_local_bind(bind_address: str) -> None:
+    host = bind_address.rsplit(":", maxsplit=1)[0]
+    if host.startswith("[") and host.endswith("]"):
+        host = host[1:-1]
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        print(
+            "\n"
+            "WARNING: The gRPC server is being bound to a non-localhost interface "
+            f"({host}).\n"
+            "This exposes the server to other machines on the network or Internet.\n"
+            "The server has NO authentication and runs with your user's privileges.\n"
+            "Any process or user that can reach this interface can read files and\n"
+            "fetch network resources accessible to this user.\n"
+            "Only proceed if you understand the security implications.\n",
+            file=sys.stderr,
+        )
 
 
 def _chunk_markdown(markdown: str, chunk_size: int) -> Iterator[str]:
@@ -247,5 +313,6 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    _warn_if_non_local_bind(args.bind_address)
     grpc_server = serve(bind_address=args.bind_address, max_workers=args.max_workers)
     grpc_server.wait_for_termination()

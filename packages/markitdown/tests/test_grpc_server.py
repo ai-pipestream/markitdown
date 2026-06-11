@@ -83,3 +83,54 @@ def test_convert_requires_source_oneof(grpc_client):
         grpc_client.Convert(markitdown_pb2.ConvertRequest())
 
     assert exc_info.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+
+
+def test_convert_missing_local_file_returns_not_found(grpc_client):
+    with pytest.raises(grpc.RpcError) as exc_info:
+        grpc_client.Convert(
+            markitdown_pb2.ConvertRequest(
+                source=markitdown_pb2.Source(local_path="/nonexistent/file.txt")
+            )
+        )
+
+    assert exc_info.value.code() == grpc.StatusCode.NOT_FOUND
+
+
+def test_convert_invalid_cu_file_type_returns_invalid_argument(grpc_client):
+    with pytest.raises(grpc.RpcError) as exc_info:
+        grpc_client.Convert(
+            markitdown_pb2.ConvertRequest(
+                source=markitdown_pb2.Source(
+                    content=b"hello",
+                    stream_info=markitdown_pb2.StreamInfo(extension=".txt"),
+                ),
+                service_options=markitdown_pb2.ServiceOptions(
+                    content_understanding=markitdown_pb2.ContentUnderstandingOptions(
+                        endpoint="https://example.invalid",
+                        file_types=[999],
+                    )
+                ),
+            )
+        )
+
+    assert exc_info.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+    assert "999" in exc_info.value.details()
+
+
+def test_convert_stream_yields_started_before_chunks(grpc_client):
+    request = markitdown_pb2.ConvertStreamRequest(
+        source=markitdown_pb2.Source(
+            content=b"hello\n",
+            stream_info=markitdown_pb2.StreamInfo(
+                extension=".txt", mimetype="text/plain", charset="utf-8"
+            ),
+        ),
+        conversion_options=markitdown_pb2.ConversionOptions(keep_data_uris=False),
+        service_options=markitdown_pb2.ServiceOptions(enable_builtins=True),
+    )
+
+    stream = list(grpc_client.ConvertStream(request))
+
+    assert stream[0].HasField("started")
+    assert stream[0].started.source_kind == "content"
+    assert any(event.HasField("markdown_chunk") for event in stream)
